@@ -1,6 +1,6 @@
 name: EMHASS GUI Custom
 description: Energy Management for Home Assistant (custom GUI)
-url: https://github.com/JoshC1994/emhass-gui
+url: https://github.com/JoshC1994/emhass-add-on
 version: latest
 slug: emhass_gui_custom
 arch:
