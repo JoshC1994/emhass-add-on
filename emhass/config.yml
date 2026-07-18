@@ -6,7 +6,7 @@ slug: emhass_gui_custom
 arch:
   - aarch64
   - amd64
-image: "ghcr.io/davidusb-geek/emhass" 
+"image": "ghcr.io/joshc1994/emhass:latest"
 ports:
   5001/tcp: 5001
 ports_description:
