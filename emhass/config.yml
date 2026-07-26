@@ -1,7 +1,7 @@
 name: EMHASS GUI Custom
 description: Energy Management for Home Assistant (custom GUI)
 url: https://github.com/JoshC1994/emhass-add-on
-version: v20260726-0017020 #set if use image container version
+version: v20260726-017a368 #set if use image container version
 slug: emhass_gui_custom
 arch:
   - aarch64
