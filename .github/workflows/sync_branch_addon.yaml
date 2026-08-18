@@ -1,0 +1,212 @@
+name: Sync branch add-on from emhass repository dispatch
+
+on:
+  repository_dispatch:
+    types: [emhass-branch-updated, emhass-branch-deleted]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch name in emhass repo'
+        required: true
+      slug:
+        description: 'Slug to use for the add-on folder (lowercase, hyphenated)'
+        required: true
+      run_number:
+        description: 'Build/run number to use as the add-on version'
+        required: false
+        default: '1'
+      is_master:
+        description: 'Whether this branch is master/main'
+        required: false
+        default: 'false'
+      action:
+        description: 'update or delete'
+        required: false
+        default: 'update'
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_OWNER: JoshC1994
+  UPSTREAM_REPO: emhass
+
+jobs:
+  update-addon:
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'update') || github.event.action == 'emhass-branch-updated'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout add-on repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve inputs
+        id: in
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "branch=${{ github.event.inputs.branch }}" >> "$GITHUB_OUTPUT"
+            echo "slug=${{ github.event.inputs.slug }}" >> "$GITHUB_OUTPUT"
+            echo "run_number=${{ github.event.inputs.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "is_master=${{ github.event.inputs.is_master }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
+            echo "slug=${{ github.event.client_payload.slug }}" >> "$GITHUB_OUTPUT"
+            echo "run_number=${{ github.event.client_payload.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "is_master=${{ github.event.client_payload.is_master }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine target add-on folder
+        id: folder
+        run: |
+          if [ "${{ steps.in.outputs.is_master }}" = "true" ]; then
+            echo "folder=emhass" >> "$GITHUB_OUTPUT"
+            echo "addon_name=EMHASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "folder=emhass-${{ steps.in.outputs.slug }}" >> "$GITHUB_OUTPUT"
+            echo "addon_name=EMHASS - ${{ steps.in.outputs.branch }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update add-on folder
+        env:
+          FOLDER: ${{ steps.folder.outputs.folder }}
+          ADDON_NAME: ${{ steps.folder.outputs.addon_name }}
+          BRANCH: ${{ steps.in.outputs.branch }}
+          SLUG: ${{ steps.in.outputs.slug }}
+          VERSION: ${{ steps.in.outputs.run_number }}
+          IS_MASTER: ${{ steps.in.outputs.is_master }}
+          OWNER_LC_INPUT: ${{ env.UPSTREAM_OWNER }}
+        run: |
+          set -euo pipefail
+          OWNER_LC=$(echo "$OWNER_LC_INPUT" | tr '[:upper:]' '[:lower:]')
+          mkdir -p "$FOLDER"
+
+          if [ "$IS_MASTER" = "true" ]; then
+            IMAGE_REPO="emhass-master"
+            SLUG_FIELD="emhass"
+          else
+            IMAGE_REPO="emhass-${SLUG}"
+            SLUG_FIELD="emhass_${SLUG//-/_}"
+          fi
+
+          cat > "$FOLDER/config.yaml" <<EOF
+          name: "${ADDON_NAME}"
+          version: "${VERSION}"
+          slug: "${SLUG_FIELD}"
+          description: "EMHASS build from branch '${BRANCH}' (auto-published)"
+          url: "https://github.com/${OWNER_LC}/emhass"
+          arch:
+            - amd64
+            - aarch64
+            - armv7
+          init: false
+          startup: application
+          boot: auto
+          hassio_api: true
+          hassio_role: default
+          homeassistant_api: true
+          ingress: true
+          ingress_port: 5000
+          panel_icon: mdi:home-battery
+          ports:
+            5000/tcp: 5000
+          ports_description:
+            5000/tcp: "EMHASS web server (branch: ${BRANCH})"
+          map:
+            - config:rw
+            - addon_config:rw
+          options:
+            data_path: "/share/emhass"
+          schema:
+            data_path: str
+          image: "ghcr.io/${OWNER_LC}/${IMAGE_REPO}"
+          EOF
+
+          cat > "$FOLDER/build.yaml" <<EOF
+          build_from:
+            amd64: "ghcr.io/${OWNER_LC}/${IMAGE_REPO}:${VERSION}"
+            aarch64: "ghcr.io/${OWNER_LC}/${IMAGE_REPO}:${VERSION}"
+            armv7: "ghcr.io/${OWNER_LC}/${IMAGE_REPO}:${VERSION}"
+          labels:
+            org.opencontainers.image.source: "https://github.com/${OWNER_LC}/emhass"
+            org.opencontainers.image.description: "EMHASS branch build: ${BRANCH}"
+            org.opencontainers.image.version: "${VERSION}"
+          EOF
+
+          if [ "$FOLDER" != "emhass" ]; then
+            for asset in icon.png logo.png DOCS.md; do
+              if [ -f "emhass/$asset" ] && [ ! -f "$FOLDER/$asset" ]; then
+                cp "emhass/$asset" "$FOLDER/$asset"
+              fi
+            done
+          fi
+
+          cat > "$FOLDER/README.md" <<EOF
+          # ${ADDON_NAME}
+
+          Auto-published test build of EMHASS from branch \\`${BRANCH}\\` in
+          [${OWNER_LC}/emhass](https://github.com/${OWNER_LC}/emhass).
+
+          - Source commit build number: ${VERSION}
+          - This add-on is generated and updated automatically. Do not edit by hand;
+            changes will be overwritten on the next push to the branch.
+          - Removing the branch from the emhass repo will remove this add-on
+            automatically on the next sync run.
+          EOF
+
+      - name: Commit and push changes
+        env:
+          FOLDER: ${{ steps.folder.outputs.folder }}
+          BRANCH: ${{ steps.in.outputs.branch }}
+          VERSION: ${{ steps.in.outputs.run_number }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FOLDER"
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Sync ${FOLDER} add-on to branch '${BRANCH}' build ${VERSION}"
+            git push
+          fi
+
+  delete-addon:
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'delete') || github.event.action == 'emhass-branch-deleted'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout add-on repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve inputs
+        id: in
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "slug=${{ github.event.inputs.slug }}" >> "$GITHUB_OUTPUT"
+            echo "branch=${{ github.event.inputs.branch }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "slug=${{ github.event.client_payload.slug }}" >> "$GITHUB_OUTPUT"
+            echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Remove add-on folder for deleted branch
+        env:
+          SLUG: ${{ steps.in.outputs.slug }}
+          BRANCH: ${{ steps.in.outputs.branch }}
+        run: |
+          set -euo pipefail
+          FOLDER="emhass-${SLUG}"
+          if [ "$BRANCH" = "master" ] || [ "$BRANCH" = "main" ]; then
+            echo "Refusing to delete the main '${FOLDER}' add-on folder."
+            exit 0
+          fi
+          if [ -d "$FOLDER" ]; then
+            git rm -r --ignore-unmatch "$FOLDER"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "Remove add-on ${FOLDER}: branch '${BRANCH}' deleted"
+            git push
+          else
+            echo "Folder ${FOLDER} does not exist, nothing to remove."
+          fi
