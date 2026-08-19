@@ -1,11 +1,13 @@
-name: Auto Update Version on Commit
+name: Auto Update Version and Name on Commit
 
 on:
   push:
     branches:
       - main
+      - '*'
     paths-ignore:
       - '.github/workflows/auto_version.yaml'
+      - 'emhass/**'
 
 jobs:
   update-version:
@@ -20,16 +22,65 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get branch name
+        id: branch
+        run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          echo "BRANCH=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          # Clean branch name for display
+          CLEAN_BRANCH=$(echo "$BRANCH_NAME" | tr '/' '-' | tr '_' '-')
+          echo "CLEAN_BRANCH=$CLEAN_BRANCH" >> $GITHUB_OUTPUT
+
       - name: Get short commit SHA
         id: commit
         run: |
           echo "SHORT_SHA=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Update config.yml with new version
+      - name: Checkout emhass repo to get version
+        uses: actions/checkout@v4
+        with:
+          repository: JoshC1994/emhass
+          ref: master
+          path: emhass-source
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version from emhass
+        id: emhass_version
         run: |
-          NEW_VERSION="v0.18.1-${{ steps.commit.outputs.SHORT_SHA }}"
+          cd emhass-source
+          # Get version from pyproject.toml
+          BASE_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2 || echo "0.18.1")
+          echo "BASE_VERSION=$BASE_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update config.yml
+        run: |
+          BRANCH="${{ steps.branch.outputs.BRANCH }}"
+          CLEAN_BRANCH="${{ steps.branch.outputs.CLEAN_BRANCH }}"
+          SHORT_SHA="${{ steps.commit.outputs.SHORT_SHA }}"
+          BASE_VERSION="${{ steps.emhass_version.outputs.BASE_VERSION }}"
+          
+          # Set version format: v{emhass_version}-{addon_commit_sha}
+          NEW_VERSION="v${BASE_VERSION}-${SHORT_SHA}"
+          
+          # Set name based on branch
+          if [ "$BRANCH" = "main" ]; then
+            NEW_NAME="EMHASS - master"
+          else
+            NEW_NAME="EMHASS - ${CLEAN_BRANCH}"
+          fi
+          
+          # Update version in config.yml
           sed -i "s/^version: .*/version: \"$NEW_VERSION\"/" emhass/config.yml
-          echo "Updated version to $NEW_VERSION"
+          
+          # Update name in config.yml
+          sed -i "s/^name: .*/name: \"$NEW_NAME\"/" emhass/config.yml
+          
+          echo "Updated addon:"
+          echo "  Name: $NEW_NAME"
+          echo "  Version: $NEW_VERSION"
+          echo "  Branch: $BRANCH"
+          echo "  Synced from emhass version: $BASE_VERSION"
 
       - name: Commit and push if changed
         run: |
@@ -39,6 +90,9 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Auto-update version to $NEW_VERSION"
+            BRANCH="${{ steps.branch.outputs.BRANCH }}"
+            SHORT_SHA="${{ steps.commit.outputs.SHORT_SHA }}"
+            BASE_VERSION="${{ steps.emhass_version.outputs.BASE_VERSION }}"
+            git commit -m "Auto-update to v${BASE_VERSION}-${SHORT_SHA} for $BRANCH"
             git push
           fi
