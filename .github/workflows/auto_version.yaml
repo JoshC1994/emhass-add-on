@@ -4,23 +4,24 @@ on:
   repository_dispatch:
     types:
       - emhass-branch-sync
+
   workflow_dispatch:
     inputs:
       branch_name:
-        description: Branch name from emhass repository
+        description: Branch name from the EMHASS repository
         required: true
         default: master
         type: string
       commit_sha:
-        description: Full commit SHA
+        description: Full commit SHA from the EMHASS repository
         required: true
         type: string
       short_sha:
-        description: Short commit SHA
+        description: Seven-character commit SHA
         required: true
         type: string
       base_version:
-        description: Base version from pyproject.toml
+        description: EMHASS base version
         required: true
         default: 0.18.1
         type: string
@@ -30,17 +31,17 @@ permissions:
 
 jobs:
   sync-addon:
-    name: Create or update branch addon
+    name: Sync branch add-on
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out addon repository
+      - name: Check out add-on repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Read dispatch inputs
-        id: input-values
+      - name: Read sync inputs
+        id: inputs
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -57,36 +58,51 @@ jobs:
 
           if [ "$EVENT_NAME" = "repository_dispatch" ]; then
             branch="$DISPATCH_BRANCH"
-            commit="$DISPATCH_COMMIT"
+            commit_sha="$DISPATCH_COMMIT"
             short_sha="$DISPATCH_SHORT_SHA"
             base_version="$DISPATCH_VERSION"
           else
             branch="$MANUAL_BRANCH"
-            commit="$MANUAL_COMMIT"
+            commit_sha="$MANUAL_COMMIT"
             short_sha="$MANUAL_SHORT_SHA"
             base_version="$MANUAL_VERSION"
           fi
 
-          if [ -z "$branch" ] || [ -z "$commit" ] || [ -z "$short_sha" ] || [ -z "$base_version" ]; then
-            echo "One or more required values are empty."
+          if [ -z "$branch" ]; then
+            echo "Branch name is empty."
+            exit 1
+          fi
+
+          if [ -z "$commit_sha" ]; then
+            echo "Commit SHA is empty."
+            exit 1
+          fi
+
+          if [ -z "$short_sha" ]; then
+            echo "Short SHA is empty."
+            exit 1
+          fi
+
+          if [ -z "$base_version" ]; then
+            echo "Base version is empty."
             exit 1
           fi
 
           {
             echo "branch=$branch"
-            echo "commit=$commit"
+            echo "commit_sha=$commit_sha"
             echo "short_sha=$short_sha"
             echo "base_version=$base_version"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Calculate addon metadata
+      - name: Calculate add-on metadata
         id: addon
         shell: bash
         env:
-          BRANCH: ${{ steps.input-values.outputs.branch }}
-          COMMIT: ${{ steps.input-values.outputs.commit }}
-          SHORT_SHA: ${{ steps.input-values.outputs.short_sha }}
-          BASE_VERSION: ${{ steps.input-values.outputs.base_version }}
+          BRANCH: ${{ steps.inputs.outputs.branch }}
+          COMMIT_SHA: ${{ steps.inputs.outputs.commit_sha }}
+          SHORT_SHA: ${{ steps.inputs.outputs.short_sha }}
+          BASE_VERSION: ${{ steps.inputs.outputs.base_version }}
         run: |
           set -euo pipefail
 
@@ -101,7 +117,7 @@ jobs:
               | sed 's/-*$//')"
 
             if [ -z "$safe_branch" ]; then
-              echo "The branch name produced an empty addon slug."
+              echo "Branch name cannot be converted into a valid add-on slug."
               exit 1
             fi
 
@@ -109,185 +125,125 @@ jobs:
             addon_name="EMHASS (${BRANCH})"
           fi
 
-          version="${BASE_VERSION}-${SHORT_SHA}"
+          addon_version="${BASE_VERSION}-${SHORT_SHA}"
 
           {
             echo "addon_dir=$addon_dir"
             echo "addon_name=$addon_name"
-            echo "version=$version"
+            echo "addon_version=$addon_version"
             echo "branch=$BRANCH"
-            echo "commit=$COMMIT"
+            echo "commit_sha=$COMMIT_SHA"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create addon directory
-        env:
-          ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$ADDON_DIR"
-
-      - name: Copy addon template files
+      - name: Create branch add-on from template
+        shell: bash
         env:
           ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
         run: |
           set -euo pipefail
 
-          if [ "$ADDON_DIR" = "emhass" ] || [ "$ADDON_DIR" = "emhass-test" ]; then
+          if [ "$ADDON_DIR" = "emhass" ]; then
             exit 0
           fi
 
-          for file in DOCS.md README.md Test.md build.yaml icon.png logo.png; do
-            if [ -f "emhass-test/$file" ]; then
-              cp "emhass-test/$file" "$ADDON_DIR/$file"
-            fi
-          done
-
-          if [ -d "emhass-test/images" ]; then
-            rm -rf "$ADDON_DIR/images"
-            cp -R "emhass-test/images" "$ADDON_DIR/images"
-          else
-            mkdir -p "$ADDON_DIR/images"
+          if [ ! -d "$ADDON_DIR" ]; then
+            cp -R emhass-test "$ADDON_DIR"
           fi
 
-          if [ -d "emhass-test/translations" ]; then
-            rm -rf "$ADDON_DIR/translations"
-            cp -R "emhass-test/translations" "$ADDON_DIR/translations"
-          else
-            mkdir -p "$ADDON_DIR/translations"
-          fi
-
-      - name: Write addon config
+      - name: Write add-on configuration
+        shell: bash
         env:
           ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
           ADDON_NAME: ${{ steps.addon.outputs.addon_name }}
-          VERSION: ${{ steps.addon.outputs.version }}
+          ADDON_VERSION: ${{ steps.addon.outputs.addon_version }}
           BRANCH: ${{ steps.addon.outputs.branch }}
-          COMMIT: ${{ steps.addon.outputs.commit }}
-          IMAGE: ghcr.io/joshc1994/emhass
-        shell: bash
+          COMMIT_SHA: ${{ steps.addon.outputs.commit_sha }}
         run: |
           set -euo pipefail
 
-          python - "$ADDON_DIR/config.yml" <<'PY'
+          python3 - <<'PY'
           import os
-          import sys
-          import yaml
+          from pathlib import Path
 
-          path = sys.argv[1]
+          addon_dir = Path(os.environ["ADDON_DIR"])
+          config_path = addon_dir / "config.yml"
 
-          config = {
-              "name": os.environ["ADDON_NAME"],
-              "version": os.environ["VERSION"],
-              "slug": os.environ["ADDON_DIR"],
-              "description": (
-                  "EMHASS energy management system - "
-                  f"Branch: {os.environ['BRANCH']}"
-              ),
-              "url": "https://github.com/JoshC1994/emhass",
-              "arch": [
-                  "amd64",
-                  "aarch64",
-              ],
-              "homeassistant": "2023.1.0",
-              "image": os.environ["IMAGE"],
-              "init": False,
-              "map": [
-                  "all:rw",
-              ],
-              "options": {
-                  "no_entity_fetching": False,
-                  "publish_prefix": "",
-                  "solcast_api_key": "",
-                  "solcast_site_id": "",
-                  "weather_entity": "",
-                  "location_lat": "",
-                  "location_lon": "",
-                  "alt": 0,
-                  "module_power": 0,
-                  "module_count": 0,
-                  "inverter_power": 0,
-                  "Pd": 0,
-                  "eff": 100,
-                  "Pmax": 1000,
-                  "def_load": 0,
-              },
-              "schema": {
-                  "no_entity_fetching": "bool",
-                  "publish_prefix": "str",
-                  "solcast_api_key": "str",
-                  "solcast_site_id": "str",
-                  "weather_entity": "str",
-                  "location_lat": "str",
-                  "location_lon": "str",
-                  "alt": "int",
-                  "module_power": "int",
-                  "module_count": "int",
-                  "inverter_power": "int",
-                  "Pd": "int",
-                  "eff": "int",
-                  "Pmax": "int",
-                  "def_load": "int",
-              },
-              "startup": "services",
-              "boot": "auto",
-              "ports": {
-                  "80/tcp": None,
-              },
-              "ports_description": {
-                  "80/tcp": "EMHASS Web UI",
-              },
-              "environment": {
-                  "BRANCH": os.environ["BRANCH"],
-                  "COMMIT_SHA": os.environ["COMMIT"],
-              },
-          }
+          config = f"""name: {os.environ["ADDON_NAME"]}
+          version: "{os.environ["ADDON_VERSION"]}"
+          slug: {os.environ["ADDON_DIR"]}
+          description: "EMHASS branch build: {os.environ["BRANCH"]}"
+          url: "https://github.com/JoshC1994/emhass"
+          arch:
+            - amd64
+            - aarch64
+          homeassistant: "2023.1.0"
+          image: "ghcr.io/joshc1994/emhass"
+          init: false
+          map:
+            - all:rw
+          options:
+            no_entity_fetching: false
+            publish_prefix: ""
+            solcast_api_key: ""
+            solcast_site_id: ""
+            weather_entity: ""
+            location_lat: ""
+            location_lon: ""
+            alt: 0
+            module_power: 0
+            module_count: 0
+            inverter_power: 0
+            Pd: 0
+            eff: 100
+            Pmax: 1000
+            def_load: 0
+          schema:
+            no_entity_fetching: bool
+            publish_prefix: str
+            solcast_api_key: str
+            solcast_site_id: str
+            weather_entity: str
+            location_lat: str
+            location_lon: str
+            alt: int
+            module_power: int
+            module_count: int
+            inverter_power: int
+            Pd: int
+            eff: int
+            Pmax: int
+            def_load: int
+          startup: services
+          boot: auto
+          ports:
+            80/tcp: null
+          ports_description:
+            80/tcp: EMHASS Web UI
+          environment:
+            EMHASS_BRANCH: "{os.environ["BRANCH"]}"
+            EMHASS_COMMIT_SHA: "{os.environ["COMMIT_SHA"]}"
+          """
 
-          with open(path, "w", encoding="utf-8") as file:
-              yaml.safe_dump(
-                  config,
-                  file,
-                  sort_keys=False,
-                  default_flow_style=False,
-              )
+          config_path.write_text(config, encoding="utf-8")
           PY
 
-      - name: Update repository index
+      - name: Commit generated add-on
+        shell: bash
         env:
           ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
-          ADDON_NAME: ${{ steps.addon.outputs.addon_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ ! -f repository.yaml ]; then
-            printf '%s\n' "name: JoshC1994 EMHASS Add-ons" > repository.yaml
-          fi
-
-          if ! grep -qE "^  - $ADDON_DIR:$" repository.yaml; then
-            {
-              printf '\n'
-              printf '  - %s:\n' "$ADDON_DIR"
-              printf '      name: %s\n' "$ADDON_NAME"
-            } >> repository.yaml
-          fi
-
-      - name: Commit and push addon changes
-        env:
-          ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
-          VERSION: ${{ steps.addon.outputs.version }}
-        shell: bash
+          ADDON_VERSION: ${{ steps.addon.outputs.addon_version }}
         run: |
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add "$ADDON_DIR" repository.yaml
+          git add "$ADDON_DIR"
 
           if git diff --cached --quiet; then
-            echo "No addon changes to commit."
+            echo "No add-on changes to commit."
             exit 0
           fi
 
-          git commit -m "Update ${ADDON_DIR} to ${VERSION}"
+          git commit -m "Update ${ADDON_DIR} to ${ADDON_VERSION}"
           git push
