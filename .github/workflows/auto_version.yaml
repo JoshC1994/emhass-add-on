@@ -68,23 +68,8 @@ jobs:
             base_version="$MANUAL_VERSION"
           fi
 
-          if [ -z "$branch" ]; then
-            echo "Branch name is empty."
-            exit 1
-          fi
-
-          if [ -z "$commit_sha" ]; then
-            echo "Commit SHA is empty."
-            exit 1
-          fi
-
-          if [ -z "$short_sha" ]; then
-            echo "Short SHA is empty."
-            exit 1
-          fi
-
-          if [ -z "$base_version" ]; then
-            echo "Base version is empty."
+          if [ -z "$branch" ] || [ -z "$commit_sha" ] || [ -z "$short_sha" ] || [ -z "$base_version" ]; then
+            echo "Branch, commit SHA, short SHA, and base version are all required."
             exit 1
           fi
 
@@ -113,16 +98,18 @@ jobs:
             | sed 's/-*$//')"
 
           if [ -z "$safe_branch" ]; then
-            echo "Branch name cannot be converted into a valid Docker tag."
+            echo "Branch name cannot be converted into a valid add-on slug."
             exit 1
           fi
 
           if [ "$BRANCH" = "master" ]; then
             addon_dir="emhass"
             addon_name="EMHASS"
+            panel_title="EMHASS"
           else
             addon_dir="emhass-${safe_branch}"
             addon_name="EMHASS (${BRANCH})"
+            panel_title="EMHASS ${BRANCH}"
           fi
 
           addon_version="${BASE_VERSION}-${SHORT_SHA}-${safe_branch}"
@@ -130,6 +117,7 @@ jobs:
           {
             echo "addon_dir=$addon_dir"
             echo "addon_name=$addon_name"
+            echo "panel_title=$panel_title"
             echo "addon_version=$addon_version"
             echo "branch=$BRANCH"
             echo "commit_sha=$COMMIT_SHA"
@@ -147,29 +135,25 @@ jobs:
           fi
 
           if [ ! -d "emhass" ]; then
-            echo "Production template directory emhass does not exist."
+            echo "Missing production template folder: emhass"
             exit 1
           fi
 
-          if [ ! -d "$ADDON_DIR" ]; then
-            cp -R emhass "$ADDON_DIR"
-          fi
+          rm -rf "$ADDON_DIR"
+          cp -R emhass "$ADDON_DIR"
 
-      - name: Update branch add-on metadata
+      - name: Update branch add-on manifest
         shell: bash
         env:
           ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
           ADDON_NAME: ${{ steps.addon.outputs.addon_name }}
+          PANEL_TITLE: ${{ steps.addon.outputs.panel_title }}
           ADDON_VERSION: ${{ steps.addon.outputs.addon_version }}
+          BRANCH: ${{ steps.addon.outputs.branch }}
         run: |
           set -euo pipefail
 
           CONFIG_FILE="$ADDON_DIR/config.yml"
-
-          if [ ! -f "$CONFIG_FILE" ]; then
-            echo "Missing template config file: $CONFIG_FILE"
-            exit 1
-          fi
 
           python3 - "$CONFIG_FILE" <<'PY'
           import os
@@ -177,51 +161,38 @@ jobs:
           import sys
           from pathlib import Path
 
-          config_path = Path(sys.argv[1])
+          path = Path(sys.argv[1])
+          text = path.read_text(encoding="utf-8")
 
-          addon_dir = os.environ["ADDON_DIR"]
-          addon_name = os.environ["ADDON_NAME"]
-          addon_version = os.environ["ADDON_VERSION"]
+          replacements = {
+              "name": os.environ["ADDON_NAME"],
+              "description": f"EMHASS branch build for {os.environ['BRANCH']}",
+              "url": "https://github.com/JoshC1994/emhass",
+              "version": f'"{os.environ["ADDON_VERSION"]}"',
+              "slug": os.environ["ADDON_DIR"],
+              "image": '"ghcr.io/joshc1994/emhass"',
+              "panel_title": os.environ["PANEL_TITLE"],
+          }
 
-          text = config_path.read_text(encoding="utf-8")
+          for key, value in replacements.items():
+              pattern = rf"^{re.escape(key)}:.*$"
+              replacement = f"{key}: {value}"
+              text, count = re.subn(
+                  pattern,
+                  replacement,
+                  text,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(
+                      f"Expected exactly one '{key}:' entry in {path}."
+                  )
 
-          text, name_count = re.subn(
-              r"^name:.*$",
-              f'name: "{addon_name}"',
-              text,
-              count=1,
-              flags=re.MULTILINE,
-          )
-
-          text, version_count = re.subn(
-              r"^version:.*$",
-              f'version: "{addon_version}"',
-              text,
-              count=1,
-              flags=re.MULTILINE,
-          )
-
-          text, slug_count = re.subn(
-              r"^slug:.*$",
-              f"slug: {addon_dir}",
-              text,
-              count=1,
-              flags=re.MULTILINE,
-          )
-
-          if name_count != 1:
-              raise SystemExit("Template config.yml does not contain a name field.")
-
-          if version_count != 1:
-              raise SystemExit("Template config.yml does not contain a version field.")
-
-          if slug_count != 1:
-              raise SystemExit("Template config.yml does not contain a slug field.")
-
-          config_path.write_text(text, encoding="utf-8")
+          path.write_text(text, encoding="utf-8")
           PY
 
-      - name: Confirm Supervisor API permissions
+      - name: Validate required Ingress settings
         shell: bash
         env:
           ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
@@ -230,13 +201,11 @@ jobs:
 
           CONFIG_FILE="$ADDON_DIR/config.yml"
 
-          if ! grep -q '^hassio_api: true$' "$CONFIG_FILE"; then
-            printf '\nhassio_api: true\n' >> "$CONFIG_FILE"
-          fi
-
-          if ! grep -q '^homeassistant_api: true$' "$CONFIG_FILE"; then
-            printf 'homeassistant_api: true\n' >> "$CONFIG_FILE"
-          fi
+          grep -q '^ingress: true$' "$CONFIG_FILE"
+          grep -q '^ingress_port: 5000$' "$CONFIG_FILE"
+          grep -q '^homeassistant_api: true$' "$CONFIG_FILE"
+          grep -q '^hassio_role: default$' "$CONFIG_FILE"
+          grep -q '^webui: http://\[HOST\]:\[PORT:5000\]$' "$CONFIG_FILE"
 
       - name: Commit generated add-on
         shell: bash
