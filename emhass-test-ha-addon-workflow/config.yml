@@ -1,5 +1,5 @@
 name: EMHASS (test-ha-addon-workflow)
-version: "0.0.0-538b9d0"
+version: "0.0.0-6ae55ca"
 slug: emhass-test-ha-addon-workflow
 description: "EMHASS branch build: test-ha-addon-workflow"
 url: "https://github.com/JoshC1994/emhass"
@@ -51,4 +51,4 @@ ports_description:
   80/tcp: EMHASS Web UI
 environment:
   EMHASS_BRANCH: "test-ha-addon-workflow"
-  EMHASS_COMMIT_SHA: "538b9d074a6208b9ff58b073a39f4973a6e974e4"
+  EMHASS_COMMIT_SHA: "6ae55ca97fc4382ae90a1164a664677349a313b7"
