@@ -1,57 +1,52 @@
-name: "EMHASS (branch-test)"
+name: EMHASS (branch-test)
+description: EMHASS branch build for branch-test
+url: https://github.com/JoshC1994/emhass
 version: "0.0.0-6ae55ca-branch-test"
 slug: emhass-branch-test
-description: "EMHASS branch build: master"
-url: "https://github.com/JoshC1994/emhass"
-arch:
-  - amd64
-  - aarch64
-homeassistant: "2023.1.0"
-image: "ghcr.io/joshc1994/emhass"
-init: false
-map:
-  - all:rw
-options:
-  no_entity_fetching: false
-  publish_prefix: ""
-  solcast_api_key: ""
-  solcast_site_id: ""
-  weather_entity: ""
-  location_lat: ""
-  location_lon: ""
-  alt: 0
-  module_power: 0
-  module_count: 0
-  inverter_power: 0
-  Pd: 0
-  eff: 100
-  Pmax: 1000
-  def_load: 0
-schema:
-  no_entity_fetching: bool
-  publish_prefix: str
-  solcast_api_key: str
-  solcast_site_id: str
-  weather_entity: str
-  location_lat: str
-  location_lon: str
-  alt: int
-  module_power: int
-  module_count: int
-  inverter_power: int
-  Pd: int
-  eff: int
-  Pmax: int
-  def_load: int
-startup: services
-boot: auto
-ports:
-  80/tcp: null
-ports_description:
-  80/tcp: EMHASS Web UI
-environment:
-  EMHASS_BRANCH: "master"
-  EMHASS_COMMIT_SHA: "6ae55ca"
 
-hassio_api: true
+arch:
+  - aarch64
+  - amd64
+
+image: "ghcr.io/joshc1994/emhass"
+
+ports:
+  5000/tcp: 5000
+
+ports_description:
+  5000/tcp: Web interface and API
+
+webui: http://[HOST]:[5000]
+
+map:
+  - share:rw
+  - type: addon_config
+    path: /config
+    read_only: false
+
+init: false
+hassio_role: default
 homeassistant_api: true
+
+ingress: true
+ingress_port: 5000
+ingress_stream: true
+
+panel_icon: mdi:source-branch
+panel_title: EMHASS branch-test
+
+schema:
+  hass_url: "str?"
+  long_lived_token: "password?"
+  data_path: "list(default|/config|/data|/share|/share/emhass)?"
+  config_path: "list(default|/config/config.json|/share/config.json|/share/emhass/config.json)?"
+  time_zone: "match((\\w+)?(\\/)(\\w+))?"
+  Latitude: "float?"
+  Longitude: "float?"
+  Altitude: "float?"
+  solcast_api_key: "password?"
+  solcast_rooftop_id: "str?"
+  solar_forecast_kwp: "float?"
+  server_ip: "list(0.0.0.0|127.0.0.1)?"
+  influxdb_username: "str?"
+  influxdb_password: "password?"
