@@ -1,221 +1,101 @@
-name: Sync branch add-on from emhass repository dispatch
+name: Sync Branch Addon with Auto-Tag
 
 on:
-  repository_dispatch:
-    types: [emhass-branch-updated, emhass-branch-deleted]
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours
   workflow_dispatch:
     inputs:
-      branch:
-        description: 'Branch name in emhass repo'
+      source_branch:
+        description: 'Source branch in emhass repo (e.g., master)'
         required: true
-      slug:
-        description: 'Slug to use for the add-on folder (lowercase, hyphenated)'
+        default: 'master'
+        type: string
+      target_branch:
+        description: 'Target branch in emhass-add-on repo (e.g., main)'
         required: true
-      run_number:
-        description: 'Build/run number to use as the add-on version'
-        required: false
-        default: '1'
-      is_master:
-        description: 'Whether this branch is master/main'
-        required: false
-        default: 'false'
-      action:
-        description: 'update or delete'
-        required: false
-        default: 'update'
-
-permissions:
-  contents: write
-
-env:
-  UPSTREAM_OWNER: JoshC1994
-  UPSTREAM_REPO: emhass
-  # Folder/identity used for the master build. This intentionally
-  # matches the add-on you already have installed in Home Assistant
-  # (emhass/config.yml) so it keeps receiving updates instead of
-  # becoming a second, unrelated add-on entry.
-  MASTER_FOLDER: emhass
+        default: 'main'
+        type: string
 
 jobs:
-  update-addon:
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'update') || github.event.action == 'emhass-branch-updated'
+  sync-and-tag:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
-      - name: Checkout add-on repo
+      - name: Checkout emhass-add-on
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          path: emhass-add-on
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve inputs
-        id: in
+      - name: Checkout emhass repo
+        uses: actions/checkout@v4
+        with:
+          repository: JoshC1994/emhass
+          ref: ${{ github.event.inputs.source_branch || 'master' }}
+          path: emhass
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync emhass into addon
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "branch=${{ github.event.inputs.branch }}" >> "$GITHUB_OUTPUT"
-            echo "slug=${{ github.event.inputs.slug }}" >> "$GITHUB_OUTPUT"
-            echo "run_number=${{ github.event.inputs.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "is_master=${{ github.event.inputs.is_master }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
-            echo "slug=${{ github.event.client_payload.slug }}" >> "$GITHUB_OUTPUT"
-            echo "run_number=${{ github.event.client_payload.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "is_master=${{ github.event.client_payload.is_master }}" >> "$GITHUB_OUTPUT"
-          fi
+          cd emhass-add-on
+          # Remove old emhass code (but keep addon config)
+          rm -rf emhass/CHANGELOG.md emhass/DOCS.md emhass/README.md emhass/Test.md emhass/config.yml emhass/icon.png emhass/logo.png emhass/images emhass/translations
+          
+          # Copy new emhass code
+          cp -r ../emhass/. emhass/
+          
+          # Restore addon-specific files
+          # (they were not deleted, so they remain)
 
-      - name: Update master add-on (version bump only)
-        if: steps.in.outputs.is_master == 'true'
-        env:
-          VERSION: ${{ steps.in.outputs.run_number }}
+      - name: Get version from emhass
+        id: version
         run: |
-          set -euo pipefail
-          FOLDER="${{ env.MASTER_FOLDER }}"
+          cd emhass
+          # Try to get version from pyproject.toml
+          VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2 || echo "0.18.1")
+          echo "BASE_VERSION=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Get short commit SHA
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
+          
+          # Combined version
+          FULL_VERSION="v${VERSION}-${SHORT_SHA}"
+          echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_OUTPUT
 
-          # Only the version line is managed automatically. Everything
-          # else in config.yml (name, slug, schema, options, map, etc.)
-          # is left exactly as you've configured it, so your existing
-          # installed add-on is not disturbed.
-          sed -i.bak "s/^version:.*/version: \"${VERSION}\"/" "$FOLDER/config.yml"
-          rm -f "$FOLDER/config.yml.bak"
-
-          # Safety: remove a stray config.yaml if one ever gets created
-          # here by mistake - having both config.yml and config.yaml in
-          # the same folder confuses the Supervisor about which add-on
-          # definition to use.
-          rm -f "$FOLDER/config.yaml"
-
-      - name: Determine branch add-on folder
-        if: steps.in.outputs.is_master != 'true'
-        id: folder
+      - name: Update addon config.yml
         run: |
-          echo "folder=emhass-${{ steps.in.outputs.slug }}" >> "$GITHUB_OUTPUT"
-          echo "addon_name=EMHASS - ${{ steps.in.outputs.branch }}" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update branch add-on folder
-        if: steps.in.outputs.is_master != 'true'
-        env:
-          FOLDER: ${{ steps.folder.outputs.folder }}
-          ADDON_NAME: ${{ steps.folder.outputs.addon_name }}
-          BRANCH: ${{ steps.in.outputs.branch }}
-          SLUG: ${{ steps.in.outputs.slug }}
-          VERSION: ${{ steps.in.outputs.run_number }}
-          OWNER_LC_INPUT: ${{ env.UPSTREAM_OWNER }}
-        run: |
-          set -euo pipefail
-          OWNER_LC=$(echo "$OWNER_LC_INPUT" | tr '[:upper:]' '[:lower:]')
-          mkdir -p "$FOLDER"
-
-          IMAGE_REPO="emhass-${SLUG}"
-          SLUG_FIELD="emhass_${SLUG//-/_}"
-
-          # Remove a legacy .yml file if this folder was ever created
-          # by an older version of this workflow, so only one config
-          # file exists.
-          rm -f "$FOLDER/config.yml"
-
-          cat > "$FOLDER/config.yaml" <<EOF
-          name: "${ADDON_NAME}"
-          version: "${VERSION}"
-          slug: "${SLUG_FIELD}"
-          description: "EMHASS build from branch '${BRANCH}' (auto-published)"
-          url: "https://github.com/${OWNER_LC}/emhass"
-          arch:
-            - amd64
-            - aarch64
-            - armv7
-          init: false
-          startup: application
-          boot: auto
-          hassio_api: true
-          hassio_role: default
-          homeassistant_api: true
-          ingress: true
-          ingress_port: 5000
-          ingress_stream: true
-          panel_icon: mdi:home-battery
-          webui: http://[HOST]:[PORT:5000]
-          ports:
-            5000/tcp: 5000
-          ports_description:
-            5000/tcp: "EMHASS web server (branch: ${BRANCH})"
-          map:
-            - share:rw
-            - type: addon_config
-              path: /config
-              read_only: false
-          options:
-            data_path: "/share/emhass"
-          schema:
-            data_path: "list(default|/config|/data|/share|/share/emhass)?"
-          image: "ghcr.io/${OWNER_LC}/${IMAGE_REPO}"
-          EOF
-
-          for asset in icon.png logo.png DOCS.md; do
-            if [ -f "${{ env.MASTER_FOLDER }}/$asset" ]; then
-              cp -f "${{ env.MASTER_FOLDER }}/$asset" "$FOLDER/$asset"
-            fi
-          done
-
-          cat > "$FOLDER/README.md" <<EOF
-          # ${ADDON_NAME}
-
-          Auto-published test build of EMHASS from branch \`${BRANCH}\` in
-          [${OWNER_LC}/emhass](https://github.com/${OWNER_LC}/emhass).
-
-          - Source commit build number: ${VERSION}
-          - This add-on is generated and updated automatically. Do not edit by hand;
-            changes will be overwritten on the next push to the branch.
-          - Removing the branch from the emhass repo will remove this add-on
-            automatically (or via the daily cleanup job).
-          EOF
+          cd emhass-add-on
+          sed -i "s/^version: .*/version: \"${{ steps.version.outputs.FULL_VERSION }}\"/" emhass/config.yml
+          echo "Updated addon version to ${{ steps.version.outputs.FULL_VERSION }}"
 
       - name: Commit and push changes
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cd emhass-add-on
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
           git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
           else
-            git commit -m "Sync add-on for branch '${{ steps.in.outputs.branch }}' build ${{ steps.in.outputs.run_number }}"
-            git push
+            git commit -m "Sync from emhass ${{ steps.version.outputs.FULL_VERSION }}"
+            git push origin ${{ github.event.inputs.target_branch || 'main' }}
           fi
 
-  delete-addon:
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'delete') || github.event.action == 'emhass-branch-deleted'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout add-on repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Resolve inputs
-        id: in
+      - name: Create Git tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "slug=${{ github.event.inputs.slug }}" >> "$GITHUB_OUTPUT"
-            echo "branch=${{ github.event.inputs.branch }}" >> "$GITHUB_OUTPUT"
+          cd emhass-add-on
+          TAG_NAME="${{ steps.version.outputs.FULL_VERSION }}"
+          
+          # Check if tag already exists
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists, skipping"
           else
-            echo "slug=${{ github.event.client_payload.slug }}" >> "$GITHUB_OUTPUT"
-            echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Remove add-on folder for deleted branch
-        env:
-          SLUG: ${{ steps.in.outputs.slug }}
-          BRANCH: ${{ steps.in.outputs.branch }}
-        run: |
-          set -euo pipefail
-          FOLDER="emhass-${SLUG}"
-          if [ "$BRANCH" = "master" ] || [ "$BRANCH" = "main" ]; then
-            echo "Refusing to delete the main '${{ env.MASTER_FOLDER }}' add-on folder."
-            exit 0
-          fi
-          if [ -d "$FOLDER" ]; then
-            git rm -r --ignore-unmatch "$FOLDER"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit -m "Remove add-on ${FOLDER}: branch '${BRANCH}' deleted"
-            git push
-          else
-            echo "Folder ${FOLDER} does not exist, nothing to remove."
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git tag -a "$TAG_NAME" -m "Auto-release $TAG_NAME"
+            git push origin "$TAG_NAME"
+            echo "Created and pushed tag: $TAG_NAME"
           fi
