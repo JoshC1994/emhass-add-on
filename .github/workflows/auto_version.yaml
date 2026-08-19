@@ -1,0 +1,44 @@
+name: Auto Update Version on Commit
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/workflows/auto_version.yaml'
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get short commit SHA
+        id: commit
+        run: |
+          echo "SHORT_SHA=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Update config.yml with new version
+        run: |
+          NEW_VERSION="v0.18.1-${{ steps.commit.outputs.SHORT_SHA }}"
+          sed -i "s/^version: .*/version: \"$NEW_VERSION\"/" emhass/config.yml
+          echo "Updated version to $NEW_VERSION"
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add emhass/config.yml
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-update version to $NEW_VERSION"
+            git push
+          fi
