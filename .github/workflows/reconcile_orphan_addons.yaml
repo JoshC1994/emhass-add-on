@@ -1,79 +1,78 @@
-name: Reconcile orphaned branch add-ons
-
-# Safety net for sync_branch_addon.yaml. Branch-delete events can
-# occasionally be missed (force-pushes, GitHub outages, manual repo
-# admin actions, etc). This runs daily and after any manual trigger,
-# lists the branches that currently exist in the emhass repo, and
-# removes any emhass-<slug> add-on folder here that no longer has a
-# matching branch. The main "emhass" (master) folder is never touched.
+name: Reconcile Orphan Addons
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '17 3 * * *'
-  workflow_dispatch: {}
-
-permissions:
-  contents: write
-
-env:
-  UPSTREAM_OWNER: JoshC1994
-  UPSTREAM_REPO: emhass
-  MASTER_FOLDER: emhass
+    - cron: '0 3 * * *'  # Run daily at 3 AM UTC
 
 jobs:
-  reconcile:
+  cleanup-orphans:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout add-on repo
+      - name: Checkout addon repo
         uses: actions/checkout@v4
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: List current branch slugs from emhass repo
-        id: live
+      - name: Get branches from emhass repo
+        id: branches
         run: |
-          set -euo pipefail
-          : > live_slugs.txt
-          PAGE=1
-          while :; do
-            RESP=$(curl -sS "https://api.github.com/repos/${{ env.UPSTREAM_OWNER }}/${{ env.UPSTREAM_REPO }}/branches?per_page=100&page=${PAGE}")
-            COUNT=$(echo "$RESP" | jq 'length')
-            if [ "$COUNT" -eq 0 ]; then
-              break
-            fi
-            echo "$RESP" | jq -r '.[].name' \
-              | tr '[:upper:]' '[:lower:]' \
-              | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' \
-              >> live_slugs.txt
-            PAGE=$((PAGE + 1))
-          done
-          echo "Live branch slugs:"
-          sort -u -o live_slugs.txt live_slugs.txt
-          cat live_slugs.txt
+          BRANCHES=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/JoshC1994/emhass/branches" | \
+            jq -r '.[].name' | tr '\n' ' ')
+          echo "branches=$BRANCHES" >> $GITHUB_OUTPUT
 
-      - name: Remove folders with no matching branch
+      - name: Find addon directories
+        id: addons
         run: |
-          set -euo pipefail
-          for dir in emhass-*/; do
-            [ -d "$dir" ] || continue
-            FOLDER="${dir%/}"
-            SLUG="${FOLDER#emhass-}"
-            if [ "$FOLDER" = "${{ env.MASTER_FOLDER }}" ]; then
+          ADDONS=$(find . -maxdepth 1 -type d -name 'emhass*' | sed 's|^\./||' | tr '\n' ' ')
+          echo "addons=$ADDONS" >> $GITHUB_OUTPUT
+
+      - name: Check for orphans and remove
+        id: cleanup
+        run: |
+          BRANCHES="${{ steps.branches.outputs.branches }}"
+          ADDONS="${{ steps.addons.outputs.addons }}"
+          REMOVED=""
+          
+          for addon in $ADDONS; do
+            # Skip protected addons
+            if [ "$addon" = "emhass" ] || [ "$addon" = "emhass-test" ]; then
               continue
             fi
-            if ! grep -qx "$SLUG" live_slugs.txt; then
-              echo "Removing orphaned add-on folder: $FOLDER (no branch '${SLUG}' found)"
-              git rm -r --ignore-unmatch "$FOLDER"
+            
+            # Extract branch name from addon directory
+            BRANCH_NAME=$(echo "$addon" | sed 's/^emhass-//')
+            
+            # Check if branch exists
+            if ! echo "$BRANCHES" | grep -qw "$BRANCH_NAME"; then
+              echo "Branch $BRANCH_NAME not found, removing addon $addon"
+              rm -rf "$addon"
+              REMOVED="$REMOVED $addon"
             fi
           done
+          
+          echo "removed=$REMOVED" >> $GITHUB_OUTPUT
 
-          rm -f live_slugs.txt
+      - name: Update repository.yaml
+        if: steps.cleanup.outputs.removed != ''
+        run: |
+          # Remove orphaned addons from repository.yaml
+          for addon in ${{ steps.cleanup.outputs.removed }}; do
+            # Remove the addon entry from repository.yaml
+            sed -i "/slug: $addon/,/^$/d" repository.yaml
+          done
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --cached --quiet; then
-            echo "Nothing to reconcile."
-          else
-            git commit -m "Reconcile: remove branch add-ons with no matching branch"
+      - name: Commit and push changes
+        if: steps.cleanup.outputs.removed != ''
+        run: |
+          git config --local user.email "github-actions[bot]@github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          if ! git diff --staged --quiet; then
+            git commit -m "Remove orphaned addons: ${{ steps.cleanup.outputs.removed }}"
             git push
+          else
+            echo "No changes to commit"
           fi
