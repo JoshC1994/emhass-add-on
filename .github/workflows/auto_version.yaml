@@ -133,10 +133,9 @@ jobs:
             echo "addon_version=$addon_version"
             echo "branch=$BRANCH"
             echo "commit_sha=$COMMIT_SHA"
-            echo "safe_branch=$safe_branch"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create branch add-on from template
+      - name: Create branch add-on from production template
         shell: bash
         env:
           ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
@@ -147,11 +146,16 @@ jobs:
             exit 0
           fi
 
-          if [ ! -d "$ADDON_DIR" ]; then
-            cp -R emhass-test "$ADDON_DIR"
+          if [ ! -d "emhass" ]; then
+            echo "Production template directory emhass does not exist."
+            exit 1
           fi
 
-      - name: Update add-on metadata
+          if [ ! -d "$ADDON_DIR" ]; then
+            cp -R emhass "$ADDON_DIR"
+          fi
+
+      - name: Update branch add-on metadata
         shell: bash
         env:
           ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
@@ -206,16 +210,33 @@ jobs:
           )
 
           if name_count != 1:
-              raise SystemExit("Template config.yml does not contain name:")
+              raise SystemExit("Template config.yml does not contain a name field.")
 
           if version_count != 1:
-              raise SystemExit("Template config.yml does not contain version:")
+              raise SystemExit("Template config.yml does not contain a version field.")
 
           if slug_count != 1:
-              raise SystemExit("Template config.yml does not contain slug:")
+              raise SystemExit("Template config.yml does not contain a slug field.")
 
           config_path.write_text(text, encoding="utf-8")
           PY
+
+      - name: Confirm Supervisor API permissions
+        shell: bash
+        env:
+          ADDON_DIR: ${{ steps.addon.outputs.addon_dir }}
+        run: |
+          set -euo pipefail
+
+          CONFIG_FILE="$ADDON_DIR/config.yml"
+
+          if ! grep -q '^hassio_api: true$' "$CONFIG_FILE"; then
+            printf '\nhassio_api: true\n' >> "$CONFIG_FILE"
+          fi
+
+          if ! grep -q '^homeassistant_api: true$' "$CONFIG_FILE"; then
+            printf 'homeassistant_api: true\n' >> "$CONFIG_FILE"
+          fi
 
       - name: Commit generated add-on
         shell: bash
