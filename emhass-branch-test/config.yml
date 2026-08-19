@@ -1,5 +1,5 @@
 name: EMHASS (branch-test)
-version: "0.0.0-6ae55ca-branch-test"
+version: "0.0.0-cbb14af-branch-test"
 slug: emhass-branch-test
 description: "EMHASS branch build: branch-test"
 url: "https://github.com/JoshC1994/emhass"
@@ -51,4 +51,4 @@ ports_description:
   80/tcp: EMHASS Web UI
 environment:
   EMHASS_BRANCH: "branch-test"
-  EMHASS_COMMIT_SHA: "6ae55ca97fc4382ae90a1164a664677349a313b7"
+  EMHASS_COMMIT_SHA: "cbb14af1c987cf3a66396a956eb1d3e94a15186e"
