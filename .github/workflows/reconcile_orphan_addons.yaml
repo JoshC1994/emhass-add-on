@@ -1,0 +1,79 @@
+name: Reconcile orphaned branch add-ons
+
+# Safety net for sync_branch_addon.yaml. Branch-delete events can
+# occasionally be missed (force-pushes, GitHub outages, manual repo
+# admin actions, etc). This runs daily and after any manual trigger,
+# lists the branches that currently exist in the emhass repo, and
+# removes any emhass-<slug> add-on folder here that no longer has a
+# matching branch. The main "emhass" (master) folder is never touched.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_OWNER: JoshC1994
+  UPSTREAM_REPO: emhass
+  MASTER_FOLDER: emhass
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout add-on repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List current branch slugs from emhass repo
+        id: live
+        run: |
+          set -euo pipefail
+          : > live_slugs.txt
+          PAGE=1
+          while :; do
+            RESP=$(curl -sS "https://api.github.com/repos/${{ env.UPSTREAM_OWNER }}/${{ env.UPSTREAM_REPO }}/branches?per_page=100&page=${PAGE}")
+            COUNT=$(echo "$RESP" | jq 'length')
+            if [ "$COUNT" -eq 0 ]; then
+              break
+            fi
+            echo "$RESP" | jq -r '.[].name' \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' \
+              >> live_slugs.txt
+            PAGE=$((PAGE + 1))
+          done
+          echo "Live branch slugs:"
+          sort -u -o live_slugs.txt live_slugs.txt
+          cat live_slugs.txt
+
+      - name: Remove folders with no matching branch
+        run: |
+          set -euo pipefail
+          for dir in emhass-*/; do
+            [ -d "$dir" ] || continue
+            FOLDER="${dir%/}"
+            SLUG="${FOLDER#emhass-}"
+            if [ "$FOLDER" = "${{ env.MASTER_FOLDER }}" ]; then
+              continue
+            fi
+            if ! grep -qx "$SLUG" live_slugs.txt; then
+              echo "Removing orphaned add-on folder: $FOLDER (no branch '${SLUG}' found)"
+              git rm -r --ignore-unmatch "$FOLDER"
+            fi
+          done
+
+          rm -f live_slugs.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --cached --quiet; then
+            echo "Nothing to reconcile."
+          else
+            git commit -m "Reconcile: remove branch add-ons with no matching branch"
+            git push
+          fi
