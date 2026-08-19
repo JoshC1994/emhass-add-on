@@ -1,5 +1,5 @@
 name: EMHASS
-version: "0.0.0-7cff83d"
+version: "0.0.0-6ae55ca"
 slug: emhass
 description: "EMHASS branch build: master"
 url: "https://github.com/JoshC1994/emhass"
@@ -51,4 +51,4 @@ ports_description:
   80/tcp: EMHASS Web UI
 environment:
   EMHASS_BRANCH: "master"
-  EMHASS_COMMIT_SHA: "7cff83d657e2496e9cf9aff32b836b49e540bfc4"
+  EMHASS_COMMIT_SHA: "6ae55ca97fc4382ae90a1164a664677349a313b7"
