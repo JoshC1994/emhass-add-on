@@ -106,26 +106,26 @@ jobs:
         run: |
           set -euo pipefail
 
+          safe_branch="$(printf '%s' "$BRANCH" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's#[^a-z0-9._-]#-#g' \
+            | sed 's/^-*//' \
+            | sed 's/-*$//')"
+
+          if [ -z "$safe_branch" ]; then
+            echo "Branch name cannot be converted into a valid Docker tag."
+            exit 1
+          fi
+
           if [ "$BRANCH" = "master" ]; then
             addon_dir="emhass"
             addon_name="EMHASS"
           else
-            safe_branch="$(printf '%s' "$BRANCH" \
-              | tr '[:upper:]' '[:lower:]' \
-              | sed 's#[^a-z0-9._-]#-#g' \
-              | sed 's/^-*//' \
-              | sed 's/-*$//')"
-
-            if [ -z "$safe_branch" ]; then
-              echo "Branch name cannot be converted into a valid add-on slug."
-              exit 1
-            fi
-
             addon_dir="emhass-${safe_branch}"
             addon_name="EMHASS (${BRANCH})"
           fi
 
-          addon_version="${BASE_VERSION}-${SHORT_SHA}"
+          addon_version="${BASE_VERSION}-${SHORT_SHA}-${safe_branch}"
 
           {
             echo "addon_dir=$addon_dir"
@@ -133,6 +133,7 @@ jobs:
             echo "addon_version=$addon_version"
             echo "branch=$BRANCH"
             echo "commit_sha=$COMMIT_SHA"
+            echo "safe_branch=$safe_branch"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create branch add-on from template
