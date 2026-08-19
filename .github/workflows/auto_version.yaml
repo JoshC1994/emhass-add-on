@@ -53,7 +53,6 @@ jobs:
             ADDON_DIR="emhass"
             ADDON_NAME="EMHASS"
           else
-            # Sanitize branch name for directory (replace / with -)
             SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
             ADDON_DIR="emhass-${SAFE_BRANCH}"
             ADDON_NAME="EMHASS (${BRANCH})"
@@ -68,7 +67,6 @@ jobs:
       - name: Copy addon files from template
         run: |
           ADDON_DIR="${{ steps.addon-dir.outputs.addon_dir }}"
-          # Copy from emhass-test as template
           if [ "$ADDON_DIR" != "emhass" ] && [ "$ADDON_DIR" != "emhass-test" ]; then
             cp -n emhass-test/DOCS.md "$ADDON_DIR/" 2>/dev/null || true
             cp -n emhass-test/README.md "$ADDON_DIR/" 2>/dev/null || true
@@ -86,7 +84,7 @@ jobs:
           ADDON_NAME="${{ steps.addon-dir.outputs.addon_name }}"
           VERSION="${{ steps.inputs.outputs.base_version }}-${{ steps.inputs.outputs.short_sha }}"
           BRANCH="${{ steps.inputs.outputs.branch_name }}"
-          
+          COMMIT_SHA_VAL="${{ steps.inputs.outputs.commit_sha }}"
           cat > "$ADDON_DIR/config.yml" << EOF
 name: $ADDON_NAME
 version: $VERSION
@@ -143,15 +141,13 @@ ports_description:
   80/tcp: EMHASS Web UI
 environment:
   BRANCH: $BRANCH
-  COMMIT_SHA: ${{ steps.inputs.outputs.commit_sha }}
+  COMMIT_SHA: $COMMIT_SHA_VAL
 EOF
 
       - name: Update repository.yaml
         run: |
           ADDON_DIR="${{ steps.addon-dir.outputs.addon_dir }}"
-          # Check if addon already in repository.yaml
           if ! grep -q "slug: $ADDON_DIR" repository.yaml; then
-            # Add new addon entry
             cat >> repository.yaml << EOF
 
 - slug: $ADDON_DIR
