@@ -1,24 +1,24 @@
 name: EMHASS
-version: 0.0.0-868c466
+version: "0.18.1-dc83c98"
 slug: emhass
-description: 'EMHASS energy management system - Branch: master'
-url: https://github.com/JoshC1994/emhass
+description: "EMHASS branch build: master"
+url: "https://github.com/JoshC1994/emhass"
 arch:
-- amd64
-- aarch64
-homeassistant: 2023.1.0
-image: ghcr.io/joshc1994/emhass
+  - amd64
+  - aarch64
+homeassistant: "2023.1.0"
+image: "ghcr.io/joshc1994/emhass"
 init: false
 map:
-- all:rw
+  - all:rw
 options:
   no_entity_fetching: false
-  publish_prefix: ''
-  solcast_api_key: ''
-  solcast_site_id: ''
-  weather_entity: ''
-  location_lat: ''
-  location_lon: ''
+  publish_prefix: ""
+  solcast_api_key: ""
+  solcast_site_id: ""
+  weather_entity: ""
+  location_lat: ""
+  location_lon: ""
   alt: 0
   module_power: 0
   module_count: 0
@@ -50,5 +50,5 @@ ports:
 ports_description:
   80/tcp: EMHASS Web UI
 environment:
-  BRANCH: master
-  COMMIT_SHA: 868c466db276ef4d0f9454cc265b3394b1a02b35
+  EMHASS_BRANCH: "master"
+  EMHASS_COMMIT_SHA: "dc83c9852859f3fde9f86fadcf485d823dceebce"
