@@ -2,77 +2,100 @@ name: Reconcile Orphan Addons
 
 on:
   workflow_dispatch:
+
   schedule:
-    - cron: '0 3 * * *'  # Run daily at 3 AM UTC
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: write
 
 jobs:
   cleanup-orphans:
+    name: Remove add-ons for deleted branches
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout addon repo
+      - name: Check out add-on repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Get branches from emhass repo
+      - name: Get active EMHASS branches
         id: branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          BRANCHES=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/JoshC1994/emhass/branches" | \
-            jq -r '.[].name' | tr '\n' ' ')
-          echo "branches=$BRANCHES" >> $GITHUB_OUTPUT
+          set -euo pipefail
 
-      - name: Find addon directories
-        id: addons
-        run: |
-          ADDONS=$(find . -maxdepth 1 -type d -name 'emhass*' | sed 's|^\./||' | tr '\n' ' ')
-          echo "addons=$ADDONS" >> $GITHUB_OUTPUT
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/JoshC1994/emhass/branches?per_page=100" \
+            | jq -r '.[].name' \
+            > /tmp/emhass-branches.txt
 
-      - name: Check for orphans and remove
+          echo "Active branches:"
+          cat /tmp/emhass-branches.txt
+
+      - name: Remove only confirmed orphan add-ons
         id: cleanup
+        shell: bash
         run: |
-          BRANCHES="${{ steps.branches.outputs.branches }}"
-          ADDONS="${{ steps.addons.outputs.addons }}"
-          REMOVED=""
-          
-          for addon in $ADDONS; do
-            # Skip protected addons
-            if [ "$addon" = "emhass" ] || [ "$addon" = "emhass-test" ]; then
+          set -euo pipefail
+
+          removed=""
+
+          while IFS= read -r addon_dir; do
+            if [ "$addon_dir" = "emhass" ] || [ "$addon_dir" = "emhass-test" ]; then
               continue
             fi
-            
-            # Extract branch name from addon directory
-            BRANCH_NAME=$(echo "$addon" | sed 's/^emhass-//')
-            
-            # Check if branch exists
-            if ! echo "$BRANCHES" | grep -qw "$BRANCH_NAME"; then
-              echo "Branch $BRANCH_NAME not found, removing addon $addon"
-              rm -rf "$addon"
-              REMOVED="$REMOVED $addon"
+
+            safe_branch="${addon_dir#emhass-}"
+
+            found="false"
+
+            while IFS= read -r branch; do
+              normalized_branch="$(printf '%s' "$branch" \
+                | tr '[:upper:]' '[:lower:]' \
+                | sed 's#[^a-z0-9._-]#-#g' \
+                | sed 's/^-*//' \
+                | sed 's/-*$//')"
+
+              if [ "$safe_branch" = "$normalized_branch" ]; then
+                found="true"
+                break
+              fi
+            done < /tmp/emhass-branches.txt
+
+            if [ "$found" = "false" ]; then
+              echo "Removing orphan add-on: $addon_dir"
+              rm -rf "$addon_dir"
+              removed="$removed $addon_dir"
+            else
+              echo "Keeping $addon_dir because its source branch still exists."
             fi
-          done
-          
-          echo "removed=$REMOVED" >> $GITHUB_OUTPUT
+          done < <(find . -mindepth 1 -maxdepth 1 -type d -name "emhass-*" -printf "%f\n")
 
-      - name: Update repository.yaml
-        if: steps.cleanup.outputs.removed != ''
-        run: |
-          # Remove orphaned addons from repository.yaml
-          for addon in ${{ steps.cleanup.outputs.removed }}; do
-            # Remove the addon entry from repository.yaml
-            sed -i "/slug: $addon/,/^$/d" repository.yaml
-          done
+          echo "removed=$removed" >> "$GITHUB_OUTPUT"
 
-      - name: Commit and push changes
+      - name: Commit orphan cleanup
         if: steps.cleanup.outputs.removed != ''
+        shell: bash
+        env:
+          REMOVED: ${{ steps.cleanup.outputs.removed }}
         run: |
-          git config --local user.email "github-actions[bot]@github.com"
-          git config --local user.name "github-actions[bot]"
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add -A
-          if ! git diff --staged --quiet; then
-            git commit -m "Remove orphaned addons: ${{ steps.cleanup.outputs.removed }}"
-            git push
-          else
-            echo "No changes to commit"
+
+          if git diff --cached --quiet; then
+            echo "No cleanup changes to commit."
+            exit 0
           fi
+
+          git commit -m "Remove orphaned branch add-ons:${REMOVED}"
+          git push
