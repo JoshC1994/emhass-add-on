@@ -9,8 +9,21 @@ arch:
 homeassistant: "2023.1.0"
 image: "ghcr.io/joshc1994/emhass"
 init: false
+
+ingress: true
+ingress_port: 5000
+panel_icon: mdi:chart-line
+panel_title: EMHASS branch-test
+
 map:
   - all:rw
+
+ports:
+  5000/tcp: null
+
+ports_description:
+  5000/tcp: EMHASS Web UI
+
 options:
   no_entity_fetching: false
   publish_prefix: ""
@@ -27,6 +40,7 @@ options:
   eff: 100
   Pmax: 1000
   def_load: 0
+
 schema:
   no_entity_fetching: bool
   publish_prefix: str
@@ -43,12 +57,10 @@ schema:
   eff: int
   Pmax: int
   def_load: int
+
 startup: services
 boot: auto
-ports:
-  80/tcp: null
-ports_description:
-  80/tcp: EMHASS Web UI
+
 environment:
   EMHASS_BRANCH: "branch-test"
   EMHASS_COMMIT_SHA: "cbb14af1c987cf3a66396a956eb1d3e94a15186e"
