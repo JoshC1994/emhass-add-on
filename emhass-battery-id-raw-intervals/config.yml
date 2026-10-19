@@ -1,7 +1,7 @@
 name: EMHASS (battery-id-raw-intervals)
 description: EMHASS branch build for battery-id-raw-intervals
 url: https://github.com/JoshC1994/emhass
-version: "0.0.0-2d24dc3-battery-id-raw-intervals"
+version: "0.0.0-05d8774-battery-id-raw-intervals"
 slug: emhass-battery-id-raw-intervals
 arch:
   - aarch64
