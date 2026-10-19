@@ -1,7 +1,7 @@
 name: EMHASS
 description: EMHASS branch build for master
 url: https://github.com/JoshC1994/emhass
-version: "0.0.0-145f7a2-master"
+version: "0.0.0-a962eaf-master"
 slug: emhass
 arch:
   - aarch64
