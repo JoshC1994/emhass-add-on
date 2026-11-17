@@ -1,7 +1,7 @@
 name: EMHASS (pr-1368-staleness-fill)
 description: EMHASS branch build for pr-1368-staleness-fill
 url: https://github.com/JoshC1994/emhass
-version: "0.0.0-3d2cabc-pr-1368-staleness-fill"
+version: "0.0.0-2263b0c-pr-1368-staleness-fill"
 slug: emhass-pr-1368-staleness-fill
 arch:
   - aarch64
